@@ -81,7 +81,8 @@ vpc_resource = {
                "Properties":{
                     "CidrBlock": {"Ref":"Cidr"},
                     "EnableDnsSupport":True,
-                    "EnableDnsHostnames":True
+                    "EnableDnsHostnames":True,
+                    "Tags" : [ {"Key":"Name","Value":"Kube Monitoring"}]
                     
                    }
     }
@@ -123,14 +124,20 @@ kube_igw = {
         }
 
     }
+kube_vpc_gw_at = {
+   "Type" : "AWS::EC2::VPCGatewayAttachment",
+   "Properties" : {
+      "InternetGatewayId" : {"Ref":"KubeMonitorIG"},
+      "VpcId" : {"Ref":"nestedexamplevpc"}
+   }
+}
+
 kube_route = {
   "Type" : "AWS::EC2::Route",
+  #"DependsOn" : ["KubeMonitorIG","KubeMonitorEc2Instance","KubeMonitorNI"],  
   "Properties" : {
-    "DestinationCidrBlock" : String,
-    "EgressOnlyInternetGatewayId" : String,
-    "GatewayId" : {"Ref":"KubeMonitorIG"},
-    "InstanceId" : {"Ref":"KubeMonitorEc2Instance"},
-    "NetworkInterfaceId" : {"Ref":"KubeMonitorNI"},
+    "DestinationCidrBlock" : "0.0.0.0/0",
+    "GatewayId" : {"Ref":"KubeMonitorIG"},#"igw-baf5ccdd",
     "RouteTableId" : {"Ref":"KubeMonitorRT"}
   }
 }
@@ -153,8 +160,16 @@ kube_monitor_subnet = {
         "Type" : "AWS::EC2::Subnet",
          "Properties" : {
             "VpcId" : { "Ref" : "nestedexamplevpc" },
-            "CidrBlock" : "10.50.0.0/24",
-            "AvailabilityZone" : "us-west-2b",
+            "MapPublicIpOnLaunch":True,
+            "CidrBlock" : "10.0.0.0/24",
+            #"AvailabilityZone" : {
+            #        "Fn::Select": [
+             #           0,
+             #           {
+             #               "Fn::GetAZs": ""
+              #          }
+             #       ]
+             #   },
             "Tags" : [ { "Key" : "Name", "Value" : "Kube Monitor Subnet" } ]
          }
     }
@@ -162,16 +177,48 @@ kube_monitor_subnet = {
 kube_monitor_ni = {
             "Type" : "AWS::EC2::NetworkInterface",
             "Properties":{
-                  "AssociatePublicIpAddress": "true",
-                  "DeviceIndex": "0",
                   "GroupSet": [{ "Ref" : "KubeMonitorSG" }],
                   "SubnetId" : {"Ref":"KubeMonitorSubnet"}
       
                 }
     }
 
+kube_monitor_nacl = {
+    "Type" : "AWS::EC2::NetworkAcl",
+    "Properties":{
+        "VpcId" : {"Ref":"nestedexamplevpc"}
+      }
+}
+kube_monitor_nacl_entry = {
+  "Type" : "AWS::EC2::NetworkAclEntry",
+   "Properties" : {
+      "CidrBlock" : "0.0.0.0/0",
+      "Egress" : False,
+      "NetworkAclId" : {"Ref":"KubeMonitorNetworkACL"},
+      "Protocol" : "-1",
+      "RuleAction" : "allow",
+      "RuleNumber" : 100
+   }
+}
+
+kube_monitor_assoc_nacl = {
+         "Type" : "AWS::EC2::SubnetNetworkAclAssociation",
+         "Properties" : {
+            "SubnetId" : { "Ref" : "KubeMonitorSubnet" },
+            "NetworkAclId" : {"Ref":"KubeMonitorNetworkACL"}
+         }
+    }
+kube_monitor_sn_rt_assoc = {
+   "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties" : {
+      "RouteTableId" : {"Ref":"KubeMonitorRT"},
+      "SubnetId" : {"Ref":"KubeMonitorSubnet"}
+   }
+    }
+
 ec2_instance = {
         "Type" : "AWS::EC2::Instance",
+        "DependsOn": ["KubeMonitorSubnet","KubeMonitorNI", "KubeMonitorNetworkACLAssoc", "KubeMonitorSubnetRTAssoc"],
         "Properties" : {
               "ImageId":"ami-e689729e",
               "AvailabilityZone" : "us-west-2b",
@@ -184,10 +231,14 @@ ec2_instance = {
               "DisableApiTermination" : False,
               "InstanceType" : "t2.micro",
               "KeyName" : "kube-dev-instance",
-              
               "Tags" : [ {"Key":"Name","Value":"Kube Monitoring"}],
               "Tenancy" : "default",
-              "NetworkInterfaces": [ ]
+              "NetworkInterfaces": [{
+                  "AssociatePublicIpAddress": True,
+                  "DeviceIndex": "0",
+                  "GroupSet": [{ "Ref" : "KubeMonitorSG" }],
+                  "SubnetId": { "Ref" : "KubeMonitorSubnet" }
+                }]
             }
     }
 
@@ -200,12 +251,19 @@ template_body = json.dumps({
                     }
             },
         "Resources":{
+                      
                      "%s" % config.get("vpc","name"): vpc_resource,
-                     "KubeMonitorSG" : kube_monitor_sg,
-                     "KubeMonitorSubnet": kube_monitor_subnet,
+                     "KubeMonitorSubnet": kube_monitor_subnet,                     
+                     "KubeMonitorIG":kube_igw,
+                     "KubeMonitorIGWA":kube_vpc_gw_at,
                      "KubeMonitorRT": kube_rt,
                      "KubeMonitorRoute": kube_route,
                      "KubeMonitorNI": kube_monitor_ni,
+                     "KubeMonitorNetworkACL":kube_monitor_nacl,
+                     "KubeMonitorNetworkACLEntry":kube_monitor_nacl_entry,
+                     "KubeMonitorNetworkACLAssoc":kube_monitor_assoc_nacl,
+                     "KubeMonitorSubnetRTAssoc":kube_monitor_sn_rt_assoc,
+                     "KubeMonitorSG" : kube_monitor_sg,        
                      #"KubeMonitorVolume":ebs_volume,
                      #"KubeMonitorAttachment": volume_attachment,
                      "KubeMonitorEc2Instance": ec2_instance
