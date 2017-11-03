@@ -79,7 +79,10 @@ capabilities = config.get("common","capabilities")
 vpc_resource = {
                "Type": "AWS::EC2::VPC",
                "Properties":{
-                    "CidrBlock": {"Ref":"Cidr"}
+                    "CidrBlock": {"Ref":"Cidr"},
+                    "EnableDnsSupport":True,
+                    "EnableDnsHostnames":True
+                    
                    }
     }
 
@@ -102,6 +105,35 @@ vpc_resource = {
 #      "VolumeId" : {"Ref":"KubeMonitorVolume"}
 #   }
 #}
+
+kube_rt = {
+   "Type" : "AWS::EC2::RouteTable",
+   "Properties" : {
+      "VpcId" : {"Ref":"nestedexamplevpc"},
+      "Tags" : [ {"Key":"Name","Value":"Kube Monitoring"} ]
+   }
+}
+
+kube_igw = {
+    "Type" : "AWS::EC2::InternetGateway",
+    "Properties":{
+            "Tags":[
+                    {"Key":"Name","Value":"KubeMonitorIG"}
+                ]
+        }
+
+    }
+kube_route = {
+  "Type" : "AWS::EC2::Route",
+  "Properties" : {
+    "DestinationCidrBlock" : String,
+    "EgressOnlyInternetGatewayId" : String,
+    "GatewayId" : {"Ref":"KubeMonitorIG"},
+    "InstanceId" : {"Ref":"KubeMonitorEc2Instance"},
+    "NetworkInterfaceId" : {"Ref":"KubeMonitorNI"},
+    "RouteTableId" : {"Ref":"KubeMonitorRT"}
+  }
+}
    
 kube_monitor_sg = {
   "Type" : "AWS::EC2::SecurityGroup",
@@ -127,6 +159,17 @@ kube_monitor_subnet = {
          }
     }
 
+kube_monitor_ni = {
+            "Type" : "AWS::EC2::NetworkInterface",
+            "Properties":{
+                  "AssociatePublicIpAddress": "true",
+                  "DeviceIndex": "0",
+                  "GroupSet": [{ "Ref" : "KubeMonitorSG" }],
+                  "SubnetId" : {"Ref":"KubeMonitorSubnet"}
+      
+                }
+    }
+
 ec2_instance = {
         "Type" : "AWS::EC2::Instance",
         "Properties" : {
@@ -144,13 +187,7 @@ ec2_instance = {
               
               "Tags" : [ {"Key":"Name","Value":"Kube Monitoring"}],
               "Tenancy" : "default",
-              "NetworkInterfaces": [ {
-                  "AssociatePublicIpAddress": "true",
-                  "DeviceIndex": "0",
-                  "GroupSet": [{ "Ref" : "KubeMonitorSG" }],
-                  "SubnetId" : {"Ref":"KubeMonitorSubnet"}
-      
-                } ]
+              "NetworkInterfaces": [ ]
             }
     }
 
@@ -166,6 +203,9 @@ template_body = json.dumps({
                      "%s" % config.get("vpc","name"): vpc_resource,
                      "KubeMonitorSG" : kube_monitor_sg,
                      "KubeMonitorSubnet": kube_monitor_subnet,
+                     "KubeMonitorRT": kube_rt,
+                     "KubeMonitorRoute": kube_route,
+                     "KubeMonitorNI": kube_monitor_ni,
                      #"KubeMonitorVolume":ebs_volume,
                      #"KubeMonitorAttachment": volume_attachment,
                      "KubeMonitorEc2Instance": ec2_instance
